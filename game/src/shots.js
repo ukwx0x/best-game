@@ -5,7 +5,48 @@
 // screenshot is a real render of the game, frozen for the camera.
 // Without a shot parameter the game plays normally.
 
-import { CEILING_Y, FLOOR_Y, VIEW_WIDTH } from './config.js';
+import { CEILING_Y, FLOOR_Y, PLAYER_X, VIEW_WIDTH } from './config.js';
+
+function findPlayCamera(level) {
+  // Try several framings per mine and keep the one whose runner window
+  // is clearest, so the shot shows the hazard ahead, not a collision.
+  let bestCam = 0;
+  let bestClearance = -1;
+  for (const mine of level.mines) {
+    for (const offset of [800, 650, 950, 550]) {
+      const cam = mine.x - offset;
+      if (cam < 0) {
+        continue;
+      }
+      const px = cam + PLAYER_X;
+      let clearance = 400;
+      for (const wall of [...level.barriers, ...level.phasers]) {
+        const gap = wall.x + wall.w < px ? px - (wall.x + wall.w) : wall.x - px;
+        clearance = Math.min(clearance, Math.abs(gap));
+        if (wall.x < px + 60 && wall.x + wall.w > px - 60) {
+          clearance = -100;
+        }
+      }
+      for (const spike of level.spikes) {
+        if (spike.x < px + 60 && spike.x + spike.w > px - 60) {
+          clearance = -100;
+        }
+      }
+      for (const other of level.mines) {
+        clearance = Math.min(clearance, Math.abs(other.x - px));
+      }
+      if (clearance > bestClearance) {
+        bestClearance = clearance;
+        bestCam = cam;
+      }
+    }
+  }
+  if (bestClearance >= 0) {
+    return bestCam;
+  }
+  const fallback = level.mines[0] || level.orbs[0];
+  return Math.max(0, (fallback ? fallback.x : 900) - 700);
+}
 
 export function applyShot(game, search) {
   const params = new URLSearchParams(search || '');
@@ -19,32 +60,38 @@ export function applyShot(game, search) {
 
   if (shot === 'start') {
     game.toTitle();
-    game.cameraX = 420;
+    game.cameraX = 120;
     game.animTime = 3.4;
     game.time = 3.4;
+    game.stateTime = 1.5;
     return shot;
   }
 
   if (shot === 'play') {
     game.startRun();
-    game.startLevel(1);
+    game.startLevel(2);
     game.state = 'playing';
+    game.stateTime = 1.5;
+    game.bannerTime = 0;
     game.score = 1240;
     game.best = Math.max(game.best, 2450);
     game.combo = 14;
     game.lives = 3;
-    // Frame the first orb arc ahead of the runner.
-    const target = game.level.orbs.find((orb) => orb.x > 900) || game.level.orbs[0];
-    game.cameraX = Math.max(0, target.x - 640);
+    // Frame a mine with the runner in clear space: search the mines
+    // for a camera where no wall, spike or mine sits on the runner,
+    // so the shot shows the hazard ahead, not a collision.
+    game.cameraX = findPlayCamera(game.level);
     game.player.dir = -1;
     game.player.targetAngle = Math.PI;
     game.player.angle = 2.2;
     game.player.y = (FLOOR_Y + CEILING_Y) / 2 - 40;
     game.player.vy = -300;
     game.player.onSurface = false;
+    game.player.stretch = 0.6;
     game.animTime = 12.5;
     game.time = 12.5;
     game.particles.burst(game.player.x - 30, game.player.y + 10, '#53e9ff', 10, 120);
+    game.particles.ring(game.player.x, game.player.y, '#b678ff', 56);
     game.particles.popup('+10', game.player.x + 60, game.player.y - 60, '#ffd94d');
     return shot;
   }
@@ -53,6 +100,7 @@ export function applyShot(game, search) {
     game.startRun();
     game.startLevel(1);
     game.state = 'levelComplete';
+    game.stateTime = 1.2;
     game.score = 2450;
     game.best = Math.max(game.best, 2450);
     game.stars = 3;
@@ -62,9 +110,11 @@ export function applyShot(game, search) {
       orb.taken = true;
     });
     game.orbsTaken = game.level.totalOrbs;
-    game.cameraX = Math.max(0, game.level.gateX - VIEW_WIDTH + 220);
+    game.shardsTaken = 2;
+    game.cameraX = Math.max(0, game.level.gateX - 1120);
     game.animTime = 6;
     game.time = 6;
+    game.particles.celebration();
     return shot;
   }
 
@@ -72,6 +122,7 @@ export function applyShot(game, search) {
     game.startRun();
     game.startLevel(0);
     game.state = 'gameOver';
+    game.stateTime = 1.2;
     game.score = 1870;
     game.best = Math.max(game.best, 5200);
     game.lives = 0;

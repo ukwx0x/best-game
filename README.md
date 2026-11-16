@@ -4,7 +4,7 @@
 [![rank](https://make.fun/badge/best-game-01/ukwx0x/best-game/rank.svg)](https://make.fun/bounty/best-game-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=best-game-01)
 [![reward](https://make.fun/badge/best-game-01/ukwx0x/best-game/reward.svg)](https://make.fun/bounty/best-game-01?utm_source=github&utm_medium=readme&utm_campaign=best-game-01)
 
-Aurora Flip is an original gravity flip arcade game. Flip between the floor and the ceiling, gather sun orbs, dodge crystal spikes, and reach the aurora gate across five levels, with combos, checkpoints, lives, and a best score.
+Aurora Flip is an original gravity flip arcade game. Flip between the floor and the ceiling, gather sun orbs, dodge crystal spikes, drifting mines and phasing walls, and reach the aurora gate across five themed skies, with combos, checkpoints, lives, and a best score.
 
 ## Run it
 

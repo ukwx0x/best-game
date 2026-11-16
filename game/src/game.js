@@ -1,10 +1,14 @@
 // Aurora Flip: the game state machine.
 // States: title, playing, paused, levelComplete, gameOver, victory.
 // This file owns score, lives, combos, checkpoints, level flow and
-// every transition between states. Drawing lives in render.js.
+// every transition between states. Drawing lives in render.js, the HUD
+// and menus in ui.js. A short hit stop and trauma based shake sell
+// every hit, a flip buffer keeps fast inputs fair, and a level banner
+// introduces each new sky.
 
 import {
   CEILING_Y,
+  FLIP_BUFFER,
   FLOOR_Y,
   LEVELS,
   LEVEL_CLEAR_BONUS,
@@ -41,6 +45,7 @@ export class Game {
     this.sounds = sounds;
     this.seedBase = seedBase || 'aurora';
     this.state = 'title';
+    this.stateTime = 0;
     this.time = 0;
     this.animTime = 0;
     this.levelIndex = 0;
@@ -49,15 +54,25 @@ export class Game {
     this.particles = new Particles();
     this.score = 0;
     this.best = loadBest();
+    this.isNewBest = false;
     this.lives = START_LIVES;
     this.combo = 0;
     this.cameraX = 0;
     this.respawnCamera = 0;
+    this.trauma = 0;
     this.shake = 0;
     this.flash = 0;
     this.stars = 0;
     this.levelBonus = 0;
     this.orbsTaken = 0;
+    this.shardsTaken = 0;
+    this.bannerTime = 0;
+    this.hitStop = 0;
+    this.flipBuffer = 0;
+    this.comboPop = 0;
+    this.lifePop = 0;
+    this.moteTimer = 0;
+    this.confettiTimer = 0;
     this.shotMode = false;
   }
 
@@ -66,6 +81,9 @@ export class Game {
   }
 
   get progress() {
+    if (this.state === 'levelComplete' || this.state === 'victory') {
+      return 1;
+    }
     return Math.max(0, Math.min(1, (this.cameraX + PLAYER_X) / this.level.gateX));
   }
 
@@ -73,9 +91,15 @@ export class Game {
     return 'LEVEL ' + (this.levelIndex + 1) + ' OF ' + LEVELS.length;
   }
 
+  setState(next) {
+    this.state = next;
+    this.stateTime = 0;
+  }
+
   saveBest() {
     if (this.score > this.best) {
       this.best = this.score;
+      this.isNewBest = true;
     }
     try {
       window.localStorage.setItem(BEST_KEY, String(this.best));
@@ -85,7 +109,7 @@ export class Game {
   }
 
   toTitle() {
-    this.state = 'title';
+    this.setState('title');
     this.levelIndex = 0;
     this.level = buildLevel(0, this.seedBase);
     this.player.reset();
@@ -95,16 +119,19 @@ export class Game {
     this.combo = 0;
     this.cameraX = 0;
     this.respawnCamera = 0;
+    this.trauma = 0;
     this.shake = 0;
     this.flash = 0;
+    this.isNewBest = false;
   }
 
   startRun() {
     this.score = 0;
     this.lives = START_LIVES;
     this.combo = 0;
+    this.isNewBest = false;
     this.startLevel(0);
-    this.state = 'playing';
+    this.setState('playing');
     this.sounds.start();
   }
 
@@ -116,9 +143,15 @@ export class Game {
     this.cameraX = 0;
     this.respawnCamera = 0;
     this.orbsTaken = 0;
+    this.shardsTaken = 0;
     this.combo = 0;
+    this.trauma = 0;
     this.shake = 0;
     this.flash = 0;
+    this.hitStop = 0;
+    this.flipBuffer = 0;
+    this.bannerTime = 2;
+    this.moteTimer = 0;
   }
 
   muteButton() {
@@ -173,6 +206,7 @@ export class Game {
   update(dt) {
     this.time += dt;
     this.animTime += dt;
+    this.stateTime += dt;
     if (this.shotMode) {
       // Staged for a screenshot: the scene holds still while the sky
       // keeps shimmering, so the capture matches the staged state.
@@ -192,6 +226,7 @@ export class Game {
       if (this.cameraX > this.level.length - VIEW_WIDTH - 100) {
         this.cameraX = 0;
       }
+      this.spawnMotes(dt);
       this.particles.update(dt);
       if (!muteClicked && (this.input.wasAnyPressed(['Space', 'Enter']) || this.clickedButton() === 'start')) {
         this.startRun();
@@ -201,48 +236,72 @@ export class Game {
 
     if (this.state === 'playing') {
       if (this.input.wasAnyPressed(['KeyP', 'Escape'])) {
-        this.state = 'paused';
+        this.setState('paused');
         this.sounds.click();
         return;
       }
+      // A hit stop freezes the world for a beat, so hits land hard.
+      if (this.hitStop > 0) {
+        this.hitStop -= dt;
+        this.particles.update(dt * 0.25);
+        return;
+      }
       if (!muteClicked && (this.input.wasAnyPressed(['Space', 'ArrowUp', 'KeyW']) || this.input.pointer.clicked)) {
-        this.doFlip();
+        if (!this.doFlip()) {
+          this.flipBuffer = FLIP_BUFFER;
+        }
+      }
+      if (this.flipBuffer > 0) {
+        this.flipBuffer -= dt;
+        if (this.player.flipCooldown <= 0 && this.doFlip()) {
+          this.flipBuffer = 0;
+        }
       }
       this.cameraX += this.level.speed * dt;
       const landed = this.player.update(dt);
       if (landed === 'landed') {
         const groundY = this.player.dir === 1 ? FLOOR_Y : CEILING_Y;
-        this.particles.dust(this.player.x, groundY, '#4be3c3');
+        this.particles.dust(this.player.x, groundY, '#4be3c3', this.player.impactVy);
+        this.particles.ring(this.player.x, groundY, '#4be3c3', 46);
+        this.sounds.land(this.player.impactVy);
+        if (this.player.impactVy > 900) {
+          this.trauma = Math.min(1, this.trauma + 0.18);
+        }
       }
       this.player.trailTimer -= dt;
       if (this.player.trailTimer <= 0) {
         this.player.trailTimer = 0.03;
         this.particles.trail(this.player.x - 18, this.player.y, '#53e9ff');
       }
+      this.spawnMotes(dt);
       this.checkPickups();
       this.checkCheckpoints();
-      if (!this.player.isInvulnerable(this.time) && hazardHit(this.level, this.player.box())) {
+      if (!this.player.isInvulnerable(this.time) && hazardHit(this.level, this.player.box(), this.time, this.cameraX)) {
         this.onHit();
       }
       if (this.cameraX + PLAYER_X >= this.level.gateX) {
         this.cameraX = this.level.gateX - PLAYER_X + 30;
         this.completeLevel();
       }
-      this.shake = Math.max(0, this.shake - dt * 34);
+      this.bannerTime = Math.max(0, this.bannerTime - dt);
+      this.trauma = Math.max(0, this.trauma - dt * 1.7);
+      this.shake = this.trauma * 16;
       this.flash = Math.max(0, this.flash - dt * 1.6);
+      this.comboPop = Math.max(0, this.comboPop - dt * 3);
+      this.lifePop = Math.max(0, this.lifePop - dt * 3);
       this.particles.update(dt);
       return;
     }
 
     if (this.state === 'paused') {
       if (this.input.wasAnyPressed(['KeyP', 'Escape'])) {
-        this.state = 'playing';
+        this.setState('playing');
         this.sounds.click();
         return;
       }
       const clicked = this.clickedButton();
       if (clicked === 'resume') {
-        this.state = 'playing';
+        this.setState('playing');
         this.sounds.click();
       } else if (clicked === 'restart') {
         this.startRun();
@@ -251,6 +310,7 @@ export class Game {
     }
 
     if (this.state === 'levelComplete') {
+      this.rainConfetti(dt);
       this.particles.update(dt);
       if (this.input.wasAnyPressed(['Space', 'Enter']) || this.clickedButton() === 'next') {
         this.nextLevel();
@@ -259,6 +319,9 @@ export class Game {
     }
 
     if (this.state === 'gameOver' || this.state === 'victory') {
+      if (this.state === 'victory') {
+        this.rainConfetti(dt);
+      }
       this.particles.update(dt);
       const clicked = this.clickedButton();
       if (this.input.wasAnyPressed(['Space', 'Enter']) || clicked === 'retry' || clicked === 'again') {
@@ -267,11 +330,30 @@ export class Game {
     }
   }
 
+  spawnMotes(dt) {
+    this.moteTimer -= dt;
+    if (this.moteTimer <= 0) {
+      this.moteTimer = 0.55;
+      this.particles.mote();
+    }
+  }
+
+  rainConfetti(dt) {
+    this.confettiTimer -= dt;
+    if (this.confettiTimer <= 0) {
+      this.confettiTimer = 0.22;
+      this.particles.confetti(120 + Math.random() * (VIEW_WIDTH - 240), -10, 3);
+    }
+  }
+
   doFlip() {
     if (this.player.flip()) {
       this.sounds.flip();
       this.particles.burst(this.player.x, this.player.y, '#b678ff', 8, 160);
+      this.particles.ring(this.player.x, this.player.y, '#b678ff', 56);
+      return true;
     }
+    return false;
   }
 
   checkPickups() {
@@ -291,7 +373,14 @@ export class Game {
         this.score += points;
         this.particles.popup('+' + points, orb.x - this.cameraX, orb.y - 24, '#ffd94d');
         this.particles.burst(orb.x - this.cameraX, orb.y, '#ffd94d', 10, 170);
+        this.particles.sparkle(orb.x - this.cameraX, orb.y, '#fff7cc', 4);
         this.sounds.collect(this.combo);
+        if (this.combo > 0 && this.combo % 10 === 0) {
+          this.comboPop = 1;
+          this.particles.popup('COMBO x' + this.multiplier + '!', px + 70, py - 64, '#ffd94d');
+          this.particles.ring(px, py, '#ffd94d', 80);
+          this.sounds.milestone();
+        }
       }
     }
     for (const shard of this.level.shards) {
@@ -302,10 +391,13 @@ export class Game {
       const dy = shard.y - py;
       if (dx * dx + dy * dy < 44 * 44) {
         shard.taken = true;
+        this.shardsTaken += 1;
         const points = SHARD_POINTS * this.multiplier;
         this.score += points;
         this.particles.popup('+' + points + ' SHARD', shard.x - this.cameraX, shard.y - 26, '#ffe066');
         this.particles.burst(shard.x - this.cameraX, shard.y, '#ffe066', 16, 220);
+        this.particles.sparkle(shard.x - this.cameraX, shard.y, '#ffe066', 6);
+        this.particles.ring(shard.x - this.cameraX, shard.y, '#ffe066', 74);
         this.sounds.shard();
       }
     }
@@ -318,6 +410,7 @@ export class Game {
         checkpoint.reached = true;
         this.respawnCamera = Math.max(0, checkpoint.x - 340);
         this.particles.popup('CHECKPOINT', checkpoint.x - this.cameraX, 300, '#2ee6a8');
+        this.particles.ring(checkpoint.x - this.cameraX, FLOOR_Y - 60, '#2ee6a8', 70);
         this.sounds.checkpoint();
       }
     }
@@ -327,15 +420,20 @@ export class Game {
     this.lives -= 1;
     this.combo = 0;
     this.flash = 0.55;
+    this.trauma = 1;
     this.shake = 16;
+    this.lifePop = 1;
     this.sounds.hit();
     this.particles.burst(this.player.x, this.player.y, '#ff5d7a', 20, 260);
+    this.particles.ring(this.player.x, this.player.y, '#ff5d7a', 90);
     if (this.lives <= 0) {
-      this.state = 'gameOver';
+      this.hitStop = 0.22;
+      this.setState('gameOver');
       this.saveBest();
       this.sounds.lose();
       return;
     }
+    this.hitStop = 0.09;
     this.particles.popup('HIT', this.player.x, this.player.y - 50, '#ff5d7a');
     this.cameraX = this.respawnCamera;
     this.player.reset();
@@ -348,22 +446,25 @@ export class Game {
     this.levelBonus = LEVEL_CLEAR_BONUS + LIFE_BONUS * this.lives;
     this.score += this.levelBonus;
     this.saveBest();
-    this.state = 'levelComplete';
+    this.setState('levelComplete');
     this.sounds.win();
     const gateScreenX = this.level.gateX - this.cameraX;
     this.particles.burst(gateScreenX, 360, '#2ee6a8', 30, 300);
     this.particles.burst(gateScreenX, 360, '#ffd94d', 20, 240);
+    this.particles.ring(gateScreenX, 360, '#2ee6a8', 130);
+    this.particles.confetti(gateScreenX, 300, 40);
   }
 
   nextLevel() {
     if (this.levelIndex + 1 >= LEVELS.length) {
-      this.state = 'victory';
+      this.setState('victory');
       this.saveBest();
-      this.sounds.win();
+      this.sounds.victory();
+      this.particles.confetti(VIEW_WIDTH / 2, 260, 60);
       return;
     }
     this.startLevel(this.levelIndex + 1);
-    this.state = 'playing';
+    this.setState('playing');
     this.sounds.start();
   }
 
@@ -372,7 +473,7 @@ export class Game {
       return 'Aurora Flip title screen. Press Space or click Start Game.';
     }
     if (this.state === 'playing') {
-      return this.levelLabel + '. Score ' + this.score + '. ' + this.lives + ' lives left.';
+      return this.level.def.name + ', ' + this.levelLabel + '. Score ' + this.score + '. ' + this.lives + ' lives left.';
     }
     if (this.state === 'paused') {
       return 'Paused. Press P to resume.';
