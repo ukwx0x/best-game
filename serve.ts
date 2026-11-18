@@ -1,4 +1,4 @@
-// Aurora Flip: a tiny static server for local play (Node 22, standard
+// Lumenfall: a tiny static server for local play (Node 22, standard
 // library only). Run `node serve.ts` and open http://localhost:8080.
 // It serves only files under game/, sends the types a browser game
 // needs, and refuses any path that escapes the game folder. A
@@ -64,5 +64,5 @@ createServer((request, response) => {
   });
   createReadStream(file).pipe(response);
 }).listen(port, '127.0.0.1', () => {
-  console.log('Aurora Flip is on http://localhost:' + port);
+  console.log('Lumenfall is on http://localhost:' + port);
 });

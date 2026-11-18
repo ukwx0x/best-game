@@ -1,144 +1,221 @@
-// Aurora Flip: tuning, palette and level definitions.
-// One place holds every number the game balances on, so tuning a level
-// never means hunting through the physics or the renderer. Each level
-// has its own name, sky, aurora colors and mechanics, so the run feels
-// like a journey through five different skies, not one level repeated.
+// Lumenfall: Keep the Last Lantern Lit. Tuning, palette, tower and enemy
+// definitions, and the wave plan. One file, one job: every number the
+// rest of the game balances against lives here, so tuning stays in one
+// place and the other files stay about behaviour. Final tuning was set
+// from headless full-run simulations: casual play leaks on every
+// difficulty, and strong play with upgrades and boons wins.
 
 export const VIEW_WIDTH = 1280;
 export const VIEW_HEIGHT = 720;
+export const PANEL_X = 960;
+export const PANEL_WIDTH = 320;
+export const CELL = 48;
+export const COLS = 20;
+export const ROWS = 15;
+export const STEP = 1 / 60;
+export const TOTAL_WAVES = 15;
+export const START_EMBER = 240;
+export const START_LIVES = 20;
+export const SELL_REFUND = 0.7;
 
-// The two surfaces the runner flips between. The floor band runs from
-// FLOOR_Y to the bottom of the screen, the ceiling band from the top
-// down to CEILING_Y. Play happens in the open band between them.
-export const FLOOR_Y = 620;
-export const CEILING_Y = 100;
-
-export const PLAYER_X = 260;
-export const PLAYER_SIZE = 50;
-export const GRAVITY = 2700;
-
-// Launch speed when gravity flips, so the runner leaves the surface
-// at once instead of drifting.
-export const FLIP_LAUNCH = 280;
-
-// Seconds between accepted flips, so one key press never flips twice.
-export const FLIP_COOLDOWN = 0.08;
-
-// Seconds a flip press is remembered while the cooldown runs out, so
-// a fast double tap still flips on time.
-export const FLIP_BUFFER = 0.14;
-
-// How long the runner is safe after a hit, in seconds.
-export const RESPAWN_GRACE = 1.8;
-
-export const START_LIVES = 3;
-export const ORB_POINTS = 10;
-export const SHARD_POINTS = 50;
-export const LEVEL_CLEAR_BONUS = 250;
-export const LIFE_BONUS = 100;
-export const MAX_MULTIPLIER = 5;
-
-// Phasing walls run a fixed cycle: faded, warning shimmer, then solid.
-// Only the solid part hurts, and the warning always comes first.
-export const PHASER_CYCLE = 3.2;
-export const PHASER_WARN_AT = 1.1;
-export const PHASER_SOLID_AT = 1.5;
-
-// One entry per level. Speed rises and safe gaps shrink as the run
-// goes on, and each level adds something new: barriers, then drifting
-// mines, then phasing walls, then all three at full speed.
-export const LEVELS = [
-  {
-    name: 'First Light',
-    sub: 'Learn the flip. The dawn is kind.',
-    speed: 330, length: 8400, gapMin: 280, gapMax: 430,
-    barrierChance: 0.1, shardChance: 0.16, mineChance: 0, phaserChance: 0, maxSpikes: 2,
-    skyTop: '#0b1030', skyMid: '#14525c', skyLow: '#0e2b3f',
-    auroraA: '#2ee6a8', auroraB: '#38b6ff', auroraC: '#b678ff',
-    ridgeFar: '#141c44', ridgeNear: '#0f1836', edge: '#4be3c3', mist: '#2ee6a8',
-  },
-  {
-    name: 'Twilight Reef',
-    sub: 'Crystal walls rise. Pick a side early.',
-    speed: 370, length: 9200, gapMin: 250, gapMax: 400,
-    barrierChance: 0.16, shardChance: 0.18, mineChance: 0.12, phaserChance: 0, maxSpikes: 2,
-    skyTop: '#120b30', skyMid: '#2a1a5c', skyLow: '#1a1440',
-    auroraA: '#b678ff', auroraB: '#38b6ff', auroraC: '#2ee6a8',
-    ridgeFar: '#1c1444', ridgeNear: '#140f36', edge: '#8f7bff', mist: '#b678ff',
-  },
-  {
-    name: 'Ember Dusk',
-    sub: 'Mines drift in the open sky. Thread between them.',
-    speed: 410, length: 10000, gapMin: 230, gapMax: 370,
-    barrierChance: 0.18, shardChance: 0.2, mineChance: 0.2, phaserChance: 0.12, maxSpikes: 3,
-    skyTop: '#1c0b28', skyMid: '#5c1a3a', skyLow: '#2b0e2e',
-    auroraA: '#ff7ab8', auroraB: '#ffb35c', auroraC: '#b678ff',
-    ridgeFar: '#33122e', ridgeNear: '#240e26', edge: '#ff8fb8', mist: '#ff7ab8',
-  },
-  {
-    name: 'Frost Veil',
-    sub: 'Walls fade in and out. Watch the shimmer.',
-    speed: 450, length: 10800, gapMin: 210, gapMax: 340,
-    barrierChance: 0.2, shardChance: 0.22, mineChance: 0.2, phaserChance: 0.18, maxSpikes: 3,
-    skyTop: '#0a1830', skyMid: '#1a4a6c', skyLow: '#0e2a44',
-    auroraA: '#7fe7ff', auroraB: '#e8f6ff', auroraC: '#38b6ff',
-    ridgeFar: '#14283f', ridgeNear: '#0e1e33', edge: '#7fe7ff', mist: '#7fe7ff',
-  },
-  {
-    name: 'Aurora Crown',
-    sub: 'Everything at once. Carry the light home.',
-    speed: 495, length: 11600, gapMin: 190, gapMax: 315,
-    barrierChance: 0.22, shardChance: 0.24, mineChance: 0.24, phaserChance: 0.2, maxSpikes: 3,
-    skyTop: '#140a2e', skyMid: '#3a1a6c', skyLow: '#1e0e3a',
-    auroraA: '#ffd94d', auroraB: '#b678ff', auroraC: '#2ee6a8',
-    ridgeFar: '#221244', ridgeNear: '#180e33', edge: '#ffd94d', mist: '#b678ff',
-  },
-];
-
-export const COLORS = {
-  skyTop: '#0b1030',
-  skyMid: '#123a5c',
-  skyLow: '#0e2b3f',
-  auroraA: '#2ee6a8',
-  auroraB: '#38b6ff',
-  auroraC: '#b678ff',
-  mountainFar: '#141c44',
-  mountainNear: '#0f1836',
-  surfaceTop: '#17324e',
-  surfaceLow: '#0a1428',
-  surfaceEdge: '#4be3c3',
-  crystal: '#7a5cff',
-  crystalEdge: '#c9b8ff',
-  spike: '#ff5d8f',
-  spikeEdge: '#ffc2d4',
-  orb: '#ffd94d',
-  orbCore: '#fff7cc',
-  shard: '#ffe066',
-  player: '#53e9ff',
-  playerDeep: '#3a6bff',
-  scarf: '#ff6b6b',
-  heart: '#ff5d7a',
-  heartEmpty: '#3a4666',
-  panel: '#101a38',
-  panelEdge: '#4be3c3',
-  text: '#f2f7ff',
-  textDim: '#aebdd8',
-  button: '#1d7a6e',
-  buttonHover: '#26a08d',
-  gold: '#ffd94d',
-  mine: '#ff5d5d',
-  mineCore: '#ff2e63',
+export const PALETTE = {
+  skyTop: '#0a0e24',
+  skyBottom: '#1a1440',
+  ground: '#141a38',
+  groundAlt: '#171e42',
+  path: '#3a2f52',
+  pathEdge: '#55467a',
+  stone: '#6b5a94',
+  lantern: '#ffd97a',
+  ember: '#ffb347',
+  emberHot: '#ffe9a8',
+  frost: '#7fd8ff',
+  thorn: '#8fe388',
+  star: '#fff3c4',
+  danger: '#ff5d6c',
+  panel: '#10142e',
+  panelEdge: '#2c3566',
+  text: '#f2ead8',
+  dim: '#a9a3c7',
 };
 
-// System fonts only. The game loads no font file and makes no request.
-export const FONT = '"Trebuchet MS", "Segoe UI", Verdana, sans-serif';
+export const TOWER_TYPES = {
+  ember: {
+    id: 'ember',
+    name: 'Ember Spire',
+    short: 'Fast bolts',
+    cost: 60,
+    range: 130,
+    cooldown: 0.34,
+    damage: 9,
+    projectileSpeed: 420,
+    color: '#ffb347',
+    key: '1',
+    blurb: 'Rapid fire. Cheap and faithful.',
+    upgrades: [
+      { cost: 50, damage: 14, range: 140, cooldown: 0.3 },
+      { cost: 90, damage: 22, range: 152, cooldown: 0.26 },
+    ],
+  },
+  frost: {
+    id: 'frost',
+    name: 'Frost Lantern',
+    short: 'Slows nearby foes',
+    cost: 80,
+    range: 120,
+    cooldown: 0.5,
+    damage: 3,
+    slow: 0.38,
+    color: '#7fd8ff',
+    key: '2',
+    blurb: 'Chills all foes in its glow.',
+    upgrades: [
+      { cost: 65, damage: 5, range: 132, slow: 0.46 },
+      { cost: 110, damage: 8, range: 146, slow: 0.54 },
+    ],
+  },
+  thorn: {
+    id: 'thorn',
+    name: 'Thorn Vine',
+    short: 'Poison over time',
+    cost: 90,
+    range: 150,
+    cooldown: 0.8,
+    damage: 7,
+    poison: 6,
+    projectileSpeed: 300,
+    color: '#8fe388',
+    key: '3',
+    blurb: 'Wounds that keep burning.',
+    upgrades: [
+      { cost: 75, damage: 10, range: 160, poison: 10 },
+      { cost: 130, damage: 15, range: 172, poison: 16 },
+    ],
+  },
+  cannon: {
+    id: 'cannon',
+    name: 'Sun Cannon',
+    short: 'Heavy splash',
+    cost: 140,
+    range: 170,
+    cooldown: 1.4,
+    damage: 34,
+    splash: 62,
+    projectileSpeed: 320,
+    color: '#ffe9a8',
+    key: '4',
+    blurb: 'Slow shots, wide bursts.',
+    upgrades: [
+      { cost: 120, damage: 52, range: 180, splash: 72 },
+      { cost: 200, damage: 80, range: 192, splash: 84 },
+    ],
+  },
+  mortar: {
+    id: 'mortar',
+    name: 'Star Mortar',
+    short: 'Long range shells',
+    cost: 170,
+    range: 250,
+    cooldown: 2.1,
+    damage: 55,
+    splash: 78,
+    projectileSpeed: 260,
+    color: '#e8b4ff',
+    key: '5',
+    blurb: 'Reaches across the field.',
+    upgrades: [
+      { cost: 150, damage: 85, range: 268, splash: 88 },
+      { cost: 250, damage: 130, range: 288, splash: 100 },
+    ],
+  },
+};
 
-export function formatScore(value) {
-  const digits = String(Math.max(0, Math.floor(value)));
-  let out = '';
-  for (let i = 0; i < digits.length; i += 1) {
-    if (i > 0 && (digits.length - i) % 3 === 0) out += ',';
-    out += digits[i];
-  }
-  return out;
+export const TOWER_ORDER = ['ember', 'frost', 'thorn', 'cannon', 'mortar'];
+
+export const ENEMY_TYPES = {
+  husk: {
+    id: 'husk', name: 'Husk', hp: 34, speed: 42, reward: 6, leak: 1,
+    radius: 14, color: '#8a7fb8', eye: '#ffd97a', score: 10,
+  },
+  emberling: {
+    id: 'emberling', name: 'Emberling', hp: 20, speed: 66, reward: 6, leak: 1,
+    radius: 11, color: '#c96a5a', eye: '#ffe9a8', score: 10,
+  },
+  wisp: {
+    id: 'wisp', name: 'Wisp', hp: 16, speed: 88, reward: 8, leak: 1,
+    radius: 10, color: '#7fd8ff', eye: '#ffffff', score: 15,
+  },
+  brute: {
+    id: 'brute', name: 'Brute', hp: 150, speed: 30, reward: 14, leak: 2,
+    radius: 19, color: '#5a4f8a', eye: '#ff5d6c', score: 30,
+  },
+  splitter: {
+    id: 'splitter', name: 'Splitter', hp: 70, speed: 40, reward: 10, leak: 1,
+    radius: 16, color: '#7ab86a', eye: '#eaffd8', score: 20, splitsInto: 'emberling', splitCount: 2,
+  },
+  shielded: {
+    id: 'shielded', name: 'Shielded', hp: 90, speed: 36, reward: 13, leak: 1,
+    radius: 15, color: '#9aa7d8', eye: '#ffd97a', score: 25, armor: 0.45,
+  },
+  swiftwing: {
+    id: 'swiftwing', name: 'Swiftwing', hp: 46, speed: 104, reward: 11, leak: 1,
+    radius: 12, color: '#d8a0e8', eye: '#ffffff', score: 20,
+  },
+  boss: {
+    id: 'boss', name: 'Gloomwarden', hp: 2200, speed: 24, reward: 180, leak: 5,
+    radius: 30, color: '#3a2a5e', eye: '#ff5d6c', score: 500, slowResist: 0.5,
+  },
+};
+
+// Wave plan: each wave lists groups of one kind, spawned in order.
+// hpMul grows so later waves need upgrades, not just more towers.
+export function wavePlan(wave) {
+  const plans = {
+    1: [['husk', 6, 0.9]],
+    2: [['husk', 8, 0.8], ['emberling', 4, 0.7]],
+    3: [['emberling', 8, 0.6], ['husk', 6, 0.7]],
+    4: [['husk', 10, 0.6], ['wisp', 6, 0.5], ['emberling', 4, 0.5]],
+    5: [['husk', 6, 0.6], ['boss', 1, 1.0], ['emberling', 6, 0.5]],
+    6: [['brute', 3, 1.0], ['husk', 10, 0.5], ['wisp', 6, 0.4]],
+    7: [['splitter', 5, 0.8], ['emberling', 8, 0.45], ['husk', 8, 0.5]],
+    8: [['shielded', 6, 0.8], ['wisp', 8, 0.4], ['brute', 2, 1.0]],
+    9: [['swiftwing', 8, 0.45], ['splitter', 5, 0.7], ['shielded', 4, 0.7]],
+    10: [['shielded', 6, 0.6], ['boss', 1, 1.0], ['brute', 4, 0.8], ['wisp', 8, 0.35]],
+    11: [['brute', 5, 0.8], ['swiftwing', 10, 0.4], ['splitter', 6, 0.6]],
+    12: [['shielded', 8, 0.55], ['swiftwing', 8, 0.4], ['brute', 4, 0.7], ['wisp', 10, 0.3]],
+    13: [['splitter', 8, 0.5], ['brute', 6, 0.6], ['shielded', 6, 0.5], ['swiftwing', 8, 0.35]],
+    14: [['brute', 8, 0.5], ['shielded', 8, 0.45], ['swiftwing', 12, 0.3], ['wisp', 10, 0.3]],
+    15: [['shielded', 6, 0.5], ['boss', 1, 1.0], ['brute', 6, 0.6], ['boss', 1, 2.5], ['swiftwing', 12, 0.3]],
+  };
+  return plans[wave] || plans[1];
 }
+
+export function waveHpMultiplier(wave) {
+  return 1 + (wave - 1) * 0.45;
+}
+
+export function waveClearBonus(wave) {
+  return 30 + wave * 6;
+}
+
+export const DIFFICULTIES = {
+  story: { id: 'story', name: 'Story', hpMul: 0.75, startEmber: 300, startLives: 24, blurb: 'A gentler night.' },
+  standard: { id: 'standard', name: 'Standard', hpMul: 1.0, startEmber: START_EMBER, startLives: START_LIVES, blurb: 'The intended fight.' },
+  nightmare: { id: 'nightmare', name: 'Nightmare', hpMul: 1.35, startEmber: 200, startLives: 16, blurb: 'For keepers only.' },
+};
+
+export const BOON_POOL = [
+  { id: 'sharpen', name: 'Sharpened Light', text: '+15% tower damage', apply: (m) => { m.damageMul *= 1.15; } },
+  { id: 'farsee', name: 'Far Sight', text: '+12% tower range', apply: (m) => { m.rangeMul *= 1.12; } },
+  { id: 'mend', name: 'Mend the Lantern', text: 'Repair 4 lantern light', apply: null },
+  { id: 'coffer', name: 'Ember Coffer', text: '+90 ember at once', apply: null },
+  { id: 'bounty', name: 'Bounty Night', text: '+25% ember from kills', apply: (m) => { m.rewardMul *= 1.25; } },
+  { id: 'chill', name: 'Deep Chill', text: 'Slows are 25% stronger', apply: (m) => { m.slowMul *= 1.25; } },
+  { id: 'haste', name: 'Swift Hands', text: 'Towers fire 10% faster', apply: (m) => { m.cooldownMul *= 0.9; } },
+  { id: 'bulwark', name: 'Bulwark', text: '+2 max lantern light, repair 2', apply: null },
+];
+
+export const ABILITIES = {
+  sunburst: { id: 'sunburst', name: 'Sunburst', key: 'Q', cooldown: 24, damage: 120, blurb: 'A flash that burns every foe on the field.' },
+  frostnova: { id: 'frostnova', name: 'Frost Nova', key: 'W', cooldown: 30, freeze: 3, blurb: 'Freezes every foe for 3 seconds.' },
+};

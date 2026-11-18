@@ -1,213 +1,122 @@
-// Aurora Flip: particles and floating score popups.
-// Sparks, trails, dust, shockwave rings, confetti, sparkles and
-// drifting motes all live here, plus the small "+10" texts that rise
-// from pickups. Counts are capped so a busy frame never grows the
-// lists without bound.
+// Lumenfall: particles, floating texts, shockwave rings and screen
+// shake. Every hit, death, build and leak leaves something visible, so
+// the player always sees what just happened. Counts are capped so a
+// busy frame never grows the lists without bound.
 
-import { FONT, VIEW_HEIGHT, VIEW_WIDTH } from './config.js';
-import { drawSparkle, drawStarShape } from './shapes.js';
+const MAX_PARTICLES = 420;
+const MAX_FLOATERS = 40;
 
-const MAX_PARTICLES = 340;
-const CONFETTI_COLORS = ['#2ee6a8', '#ffd94d', '#ff7ab8', '#38b6ff', '#b678ff', '#f2f7ff'];
+export function createEffects() {
+  return { particles: [], floaters: [], rings: [], shake: 0, flash: 0, flashColor: '#ffffff' };
+}
 
-export class Particles {
-  constructor() {
-    this.items = [];
-    this.popups = [];
-  }
-
-  push(item) {
-    if (this.items.length >= MAX_PARTICLES) {
-      return;
-    }
-    this.items.push(item);
-  }
-
-  burst(x, y, color, count, speed) {
-    for (let i = 0; i < count; i += 1) {
-      const angle = Math.random() * Math.PI * 2;
-      const power = speed * (0.35 + Math.random() * 0.65);
-      this.push({
-        kind: 'dot', x, y,
-        vx: Math.cos(angle) * power, vy: Math.sin(angle) * power,
-        life: 0.45 + Math.random() * 0.35, maxLife: 0.8,
-        size: 2 + Math.random() * 4, color, drag: 0.92, gravity: 0,
-      });
-    }
-  }
-
-  ring(x, y, color, maxRadius) {
-    this.push({
-      kind: 'ring', x, y, vx: 0, vy: 0,
-      life: 0.45, maxLife: 0.45, size: 6, maxRadius: maxRadius || 70,
-      color, drag: 1, gravity: 0,
+export function burstEffects(effects, x, y, color, count, speed, life, size) {
+  for (let i = 0; i < count; i += 1) {
+    if (effects.particles.length >= MAX_PARTICLES) return;
+    const angle = Math.random() * Math.PI * 2;
+    const power = speed * (0.35 + Math.random() * 0.85);
+    effects.particles.push({
+      x, y,
+      vx: Math.cos(angle) * power,
+      vy: Math.sin(angle) * power - 18,
+      life: life * (0.6 + Math.random() * 0.7),
+      maxLife: life,
+      size: size * (0.6 + Math.random() * 0.8),
+      color,
+      gravity: 60,
     });
   }
+}
 
-  sparkle(x, y, color, count) {
-    for (let i = 0; i < (count || 5); i += 1) {
-      this.push({
-        kind: 'spark', x: x + (Math.random() - 0.5) * 44, y: y + (Math.random() - 0.5) * 44,
-        vx: (Math.random() - 0.5) * 40, vy: -20 - Math.random() * 30,
-        life: 0.5 + Math.random() * 0.3, maxLife: 0.8,
-        size: 6 + Math.random() * 8, color, drag: 0.97, gravity: 0, spin: Math.random() * 6.28,
-      });
+export function spawnTrailParticle(effects, x, y, color) {
+  if (effects.particles.length >= MAX_PARTICLES) return;
+  effects.particles.push({
+    x: x + (Math.random() - 0.5) * 6, y: y + (Math.random() - 0.5) * 6,
+    vx: (Math.random() - 0.5) * 20, vy: -14 - Math.random() * 20,
+    life: 0.35, maxLife: 0.35, size: 2.5 + Math.random() * 2, color, gravity: -30,
+  });
+}
+
+export function spawnFloater(effects, x, y, text, color, big) {
+  if (effects.floaters.length >= MAX_FLOATERS) effects.floaters.shift();
+  effects.floaters.push({ x, y, text, color, life: 1.1, maxLife: 1.1, big: Boolean(big) });
+}
+
+export function spawnRing(effects, x, y, color, maxRadius) {
+  effects.rings.push({ x, y, color, radius: 8, maxRadius, life: 0.45, maxLife: 0.45 });
+}
+
+export function addShake(effects, amount) {
+  effects.shake = Math.min(16, effects.shake + amount);
+}
+
+export function addFlash(effects, color, amount) {
+  effects.flash = Math.max(effects.flash, amount);
+  effects.flashColor = color;
+}
+
+export function updateEffects(effects, dt) {
+  for (let i = effects.particles.length - 1; i >= 0; i -= 1) {
+    const p = effects.particles[i];
+    p.life -= dt;
+    if (p.life <= 0) {
+      effects.particles.splice(i, 1);
+      continue;
     }
+    p.vy += p.gravity * dt;
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
   }
-
-  trail(x, y, color) {
-    this.push({
-      kind: 'dot', x: x + (Math.random() - 0.5) * 10, y: y + (Math.random() - 0.5) * 10,
-      vx: -60 - Math.random() * 40, vy: (Math.random() - 0.5) * 30,
-      life: 0.35, maxLife: 0.35, size: 3 + Math.random() * 3, color, drag: 0.96, gravity: 0,
-    });
+  for (let i = effects.floaters.length - 1; i >= 0; i -= 1) {
+    const f = effects.floaters[i];
+    f.life -= dt;
+    f.y -= 34 * dt;
+    if (f.life <= 0) effects.floaters.splice(i, 1);
   }
-
-  dust(x, y, color, power) {
-    const count = power > 900 ? 10 : 6;
-    for (let i = 0; i < count; i += 1) {
-      this.push({
-        kind: 'dot', x: x + (Math.random() - 0.5) * 30, y,
-        vx: (Math.random() - 0.5) * 150, vy: -20 - Math.random() * 50,
-        life: 0.3 + Math.random() * 0.2, maxLife: 0.5,
-        size: 2 + Math.random() * 3, color, drag: 0.94, gravity: 0,
-      });
-    }
+  for (let i = effects.rings.length - 1; i >= 0; i -= 1) {
+    const r = effects.rings[i];
+    r.life -= dt;
+    r.radius = r.maxRadius * (1 - r.life / r.maxLife);
+    if (r.life <= 0) effects.rings.splice(i, 1);
   }
+  effects.shake = Math.max(0, effects.shake - 34 * dt);
+  effects.flash = Math.max(0, effects.flash - 1.6 * dt);
+}
 
-  mote() {
-    this.push({
-      kind: 'mote', x: VIEW_WIDTH + 12, y: 120 + Math.random() * 480,
-      vx: -26 - Math.random() * 30, vy: (Math.random() - 0.5) * 12,
-      life: 9, maxLife: 9, size: 1.5 + Math.random() * 2.5,
-      color: '#bfe9ff', drag: 1, gravity: 0, phase: Math.random() * 6.28,
-    });
+export function shakeOffset(effects) {
+  if (effects.shake <= 0.1) return { x: 0, y: 0 };
+  return {
+    x: (Math.random() - 0.5) * effects.shake,
+    y: (Math.random() - 0.5) * effects.shake,
+  };
+}
+
+export function drawEffects(ctx, effects) {
+  for (const r of effects.rings) {
+    ctx.globalAlpha = Math.max(0, r.life / r.maxLife) * 0.9;
+    ctx.strokeStyle = r.color;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(r.x, r.y, r.radius, 0, Math.PI * 2);
+    ctx.stroke();
   }
-
-  confetti(x, y, count) {
-    for (let i = 0; i < count; i += 1) {
-      const angle = -Math.PI / 2 + (Math.random() - 0.5) * 1.6;
-      const power = 220 + Math.random() * 320;
-      this.push({
-        kind: 'confetti', x, y,
-        vx: Math.cos(angle) * power, vy: Math.sin(angle) * power,
-        life: 1.4 + Math.random() * 0.9, maxLife: 2.3,
-        size: 5 + Math.random() * 5,
-        color: CONFETTI_COLORS[Math.floor(Math.random() * CONFETTI_COLORS.length)],
-        drag: 0.985, gravity: 620, rot: Math.random() * 6.28, vr: (Math.random() - 0.5) * 12,
-      });
-    }
-  }
-
-  // A still celebration for a staged screenshot: confetti already
-  // spread down both sides of the screen, clear of the center panel.
-  celebration() {
-    for (let i = 0; i < 46; i += 1) {
-      const left = i % 2 === 0;
-      this.push({
-        kind: 'confetti',
-        x: left ? 40 + Math.random() * 280 : 960 + Math.random() * 280,
-        y: 60 + Math.random() * 420,
-        vx: 0, vy: 0, life: 2.3, maxLife: 2.3, size: 5 + Math.random() * 5,
-        color: CONFETTI_COLORS[i % CONFETTI_COLORS.length],
-        drag: 1, gravity: 0, rot: Math.random() * 6.28, vr: 0,
-      });
-    }
-  }
-
-  popup(text, x, y, color) {
-    this.popups.push({ text, x, y, life: 1.1, color });
-    if (this.popups.length > 12) {
-      this.popups.shift();
-    }
-  }
-
-  update(dt) {
-    for (let i = this.items.length - 1; i >= 0; i -= 1) {
-      const item = this.items[i];
-      item.life -= dt;
-      if (item.life <= 0) {
-        this.items.splice(i, 1);
-        continue;
-      }
-      item.vx *= item.drag;
-      item.vy = item.vy * item.drag + (item.gravity || 0) * dt;
-      item.x += item.vx * dt;
-      item.y += item.vy * dt;
-      if (item.kind === 'confetti') {
-        item.rot += item.vr * dt;
-      }
-      if (item.kind === 'mote' && item.x < -20) {
-        this.items.splice(i, 1);
-      }
-    }
-    for (let i = this.popups.length - 1; i >= 0; i -= 1) {
-      const popup = this.popups[i];
-      popup.life -= dt;
-      popup.y -= 42 * dt;
-      if (popup.life <= 0) {
-        this.popups.splice(i, 1);
-      }
-    }
-  }
-
-  draw(ctx) {
-    for (const item of this.items) {
-      const alpha = Math.max(0, item.life / item.maxLife);
-      if (item.kind === 'ring') {
-        const progress = 1 - alpha;
-        ctx.globalAlpha = alpha;
-        ctx.strokeStyle = item.color;
-        ctx.lineWidth = 3 + 3 * alpha;
-        ctx.beginPath();
-        ctx.arc(item.x, item.y, item.size + (item.maxRadius - item.size) * progress, 0, Math.PI * 2);
-        ctx.stroke();
-      } else if (item.kind === 'spark') {
-        ctx.globalAlpha = alpha;
-        ctx.fillStyle = item.color;
-        drawSparkle(ctx, item.x, item.y, item.size * (0.6 + 0.4 * alpha), 0.45);
-        ctx.fill();
-      } else if (item.kind === 'confetti') {
-        ctx.globalAlpha = Math.min(1, alpha * 2);
-        ctx.fillStyle = item.color;
-        ctx.save();
-        ctx.translate(item.x, item.y);
-        ctx.rotate(item.rot);
-        ctx.fillRect(-item.size / 2, -item.size / 4, item.size, item.size / 2);
-        ctx.restore();
-      } else if (item.kind === 'mote') {
-        ctx.globalAlpha = 0.35 + 0.3 * Math.sin(item.life * 2 + item.phase);
-        ctx.fillStyle = item.color;
-        ctx.beginPath();
-        ctx.arc(item.x, item.y, item.size, 0, Math.PI * 2);
-        ctx.fill();
-      } else {
-        ctx.globalAlpha = alpha;
-        ctx.fillStyle = item.color;
-        ctx.beginPath();
-        ctx.arc(item.x, item.y, item.size, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
-    ctx.globalAlpha = 1;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    for (const popup of this.popups) {
-      const alpha = Math.max(0, Math.min(1, popup.life));
-      const scale = popup.life > 0.9 ? 1.25 - (popup.life - 0.9) * 1.25 : 1;
-      ctx.globalAlpha = alpha;
-      ctx.font = 'bold ' + Math.round(22 * scale) + 'px ' + FONT;
-      ctx.fillStyle = 'rgba(4,8,24,0.7)';
-      ctx.fillText(popup.text, popup.x + 2, popup.y + 2);
-      ctx.fillStyle = popup.color;
-      ctx.fillText(popup.text, popup.x, popup.y);
-    }
-    ctx.globalAlpha = 1;
-  }
-
-  drawStarBurst(ctx, x, y, color) {
-    ctx.fillStyle = color;
-    drawStarShape(ctx, x, y, 12, 5, 4);
+  for (const p of effects.particles) {
+    ctx.globalAlpha = Math.max(0, p.life / p.maxLife);
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
     ctx.fill();
   }
+  ctx.globalAlpha = 1;
+  ctx.textAlign = 'center';
+  for (const f of effects.floaters) {
+    ctx.globalAlpha = Math.min(1, (f.life / f.maxLife) * 2);
+    ctx.font = f.big ? 'bold 22px Georgia, serif' : 'bold 15px Georgia, serif';
+    ctx.fillStyle = f.color;
+    ctx.strokeStyle = 'rgba(5, 6, 18, 0.85)';
+    ctx.lineWidth = 4;
+    ctx.strokeText(f.text, f.x, f.y);
+    ctx.fillText(f.text, f.x, f.y);
+  }
+  ctx.globalAlpha = 1;
 }

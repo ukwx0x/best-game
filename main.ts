@@ -1,4 +1,4 @@
-// Aurora Flip, a best-game-01 entry (Node 22, standard library only).
+// Lumenfall, a best-game-01 entry (Node 22, standard library only).
 // The game is the static files under game/, played offline from
 // game/index.html with no library and no network request. This program
 // hands it in: it copies game/ and screenshots/ beside this file into

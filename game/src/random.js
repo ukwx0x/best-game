@@ -1,6 +1,17 @@
-// Aurora Flip: small seeded random numbers.
-// Levels are generated from a seed, so the same seed always builds the
-// same level. That keeps play fair and screenshots reproducible.
+// Lumenfall: small seeded random numbers. The screenshot scenes and the
+// wave shuffles use a fixed seed, so the same seed always builds the
+// same frame and the same night, which keeps staged shots honest.
+
+export function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function nextRandom() {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
 
 export function seedFromString(text) {
   let hash = 2166136261;
@@ -11,39 +22,17 @@ export function seedFromString(text) {
   return hash >>> 0;
 }
 
-export function mulberry32(seed) {
-  let state = seed >>> 0;
-  return function next() {
-    state = (state + 0x6d2b79f5) >>> 0;
-    let t = state;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
+export function pickRandom(rng, list) {
+  return list[Math.floor(rng() * list.length)];
 }
 
-export class Rng {
-  constructor(seed) {
-    this.nextFn = mulberry32(seed);
+export function shuffleCopy(rng, list) {
+  const copy = list.slice();
+  for (let i = copy.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(rng() * (i + 1));
+    const tmp = copy[i];
+    copy[i] = copy[j];
+    copy[j] = tmp;
   }
-
-  next() {
-    return this.nextFn();
-  }
-
-  range(min, max) {
-    return min + this.nextFn() * (max - min);
-  }
-
-  int(min, max) {
-    return Math.floor(this.range(min, max + 1));
-  }
-
-  chance(probability) {
-    return this.nextFn() < probability;
-  }
-
-  pick(list) {
-    return list[Math.floor(this.nextFn() * list.length)];
-  }
+  return copy;
 }

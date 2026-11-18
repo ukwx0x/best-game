@@ -4,7 +4,7 @@
 [![rank](https://make.fun/badge/best-game-01/ukwx0x/best-game/rank.svg)](https://make.fun/bounty/best-game-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=best-game-01)
 [![reward](https://make.fun/badge/best-game-01/ukwx0x/best-game/reward.svg)](https://make.fun/bounty/best-game-01?utm_source=github&utm_medium=readme&utm_campaign=best-game-01)
 
-Aurora Flip is an original gravity flip arcade game. Flip between the floor and the ceiling, gather sun orbs, dodge crystal spikes, drifting mines and phasing walls, and reach the aurora gate across five themed skies, with combos, checkpoints, lives, and a best score.
+Lumenfall is an original tower defense game. Shadows walk a winding path toward the last lantern. Build five kinds of light tower, upgrade them, slow and poison the eight shadow foes, call down Sunburst and Frost Nova, choose a boon after every wave, and hold the light through 15 waves and three Gloomwarden bosses. Three difficulties, a star rated victory, a saved best run, synthesized sound and music, and no network request: the whole game is static files under game/.
 
 ## Run it
 
@@ -12,7 +12,7 @@ Aurora Flip is an original gravity flip arcade game. Flip between the floor and 
 node serve.ts
 ```
 
-Then open http://localhost:8080 in a desktop browser. Space or click flips gravity, P pauses, M toggles sound, R restarts the run.
+Then open http://localhost:8080 in a desktop browser. Click a tower card, then click the field to build. Click a placed tower to upgrade or sell it. Keys 1-5 pick towers, Q and W fire abilities, Space starts the next wave, F toggles speed, P pauses, M toggles sound, R restarts from an end screen.
 
 ---
 

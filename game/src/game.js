@@ -1,489 +1,260 @@
-// Aurora Flip: the game state machine.
-// States: title, playing, paused, levelComplete, gameOver, victory.
-// This file owns score, lives, combos, checkpoints, level flow and
-// every transition between states. Drawing lives in render.js, the HUD
-// and menus in ui.js. A short hit stop and trauma based shake sell
-// every hit, a flip buffer keeps fast inputs fair, and a level banner
-// introduces each new sky.
+// Lumenfall: the game state machine. This file owns the run state,
+// placement rules, the per-step simulation, kill and leak sweeping,
+// abilities, boon flow, victory and defeat, star ratings and the saved
+// best score. Drawing lives in render.js, towers in towers.js, foes in
+// enemies.js, and wave timing in waves.js.
 
 import {
-  CEILING_Y,
-  FLIP_BUFFER,
-  FLOOR_Y,
-  LEVELS,
-  LEVEL_CLEAR_BONUS,
-  LIFE_BONUS,
-  MAX_MULTIPLIER,
-  ORB_POINTS,
-  PLAYER_X,
-  RESPAWN_GRACE,
-  SHARD_POINTS,
-  START_LIVES,
-  VIEW_HEIGHT,
-  VIEW_WIDTH,
+  ABILITIES, CELL, COLS, DIFFICULTIES, PANEL_X, ROWS, TOTAL_WAVES,
+  TOWER_TYPES, waveClearBonus, waveHpMultiplier,
 } from './config.js';
-import { buildLevel, hazardHit } from './level.js';
-import { Player } from './player.js';
-import { Particles } from './particles.js';
-import { pointInRect } from './input.js';
+import { pathCells, createEnemy, damageEnemy, freezeEnemy, moveEnemies } from './enemies.js';
+import { createTower, updateProjectiles, updateTowers } from './towers.js';
+import { rollBoons, updateSpawning } from './waves.js';
+import { createEffects, updateEffects, addShake, addFlash, burstEffects, spawnFloater, spawnRing } from './particles.js';
+import { mulberry32 } from './random.js';
+import { playBuild, playCoin, playDefeat, playLeak, playVictory, playAbility } from './audio.js';
 
-const BEST_KEY = 'auroraFlipBest';
+const BEST_KEY = 'lumenfall-best-v1';
 
-function loadBest() {
+export function loadBest() {
   try {
-    const saved = window.localStorage.getItem(BEST_KEY);
-    const value = Number.parseInt(saved || '0', 10);
-    return Number.isFinite(value) ? Math.max(0, value) : 0;
-  } catch (error) {
-    return 0;
+    const raw = localStorage.getItem(BEST_KEY);
+    if (!raw) return { score: 0, wave: 0, stars: 0 };
+    const parsed = JSON.parse(raw);
+    return { score: parsed.score || 0, wave: parsed.wave || 0, stars: parsed.stars || 0 };
+  } catch (err) {
+    return { score: 0, wave: 0, stars: 0 };
   }
 }
 
-export class Game {
-  constructor(input, sounds, seedBase) {
-    this.input = input;
-    this.sounds = sounds;
-    this.seedBase = seedBase || 'aurora';
-    this.state = 'title';
-    this.stateTime = 0;
-    this.time = 0;
-    this.animTime = 0;
-    this.levelIndex = 0;
-    this.level = buildLevel(0, this.seedBase);
-    this.player = new Player();
-    this.particles = new Particles();
-    this.score = 0;
-    this.best = loadBest();
-    this.isNewBest = false;
-    this.lives = START_LIVES;
-    this.combo = 0;
-    this.cameraX = 0;
-    this.respawnCamera = 0;
-    this.trauma = 0;
-    this.shake = 0;
-    this.flash = 0;
-    this.stars = 0;
-    this.levelBonus = 0;
-    this.orbsTaken = 0;
-    this.shardsTaken = 0;
-    this.bannerTime = 0;
-    this.hitStop = 0;
-    this.flipBuffer = 0;
-    this.comboPop = 0;
-    this.lifePop = 0;
-    this.moteTimer = 0;
-    this.confettiTimer = 0;
-    this.shotMode = false;
+export function saveBest(state) {
+  const best = {
+    score: Math.max(state.best.score, state.score),
+    wave: Math.max(state.best.wave, state.wave),
+    stars: Math.max(state.best.stars, state.stars || 0),
+  };
+  state.best = best;
+  try {
+    localStorage.setItem(BEST_KEY, JSON.stringify(best));
+  } catch (err) {
+    // Storage may be unavailable. The run still counts.
   }
+}
 
-  get multiplier() {
-    return Math.min(MAX_MULTIPLIER, 1 + Math.floor(this.combo / 10));
+export function createGame(difficultyId, seed) {
+  const difficulty = DIFFICULTIES[difficultyId] || DIFFICULTIES.standard;
+  const rng = mulberry32(seed >>> 0 || 1);
+  const stars = [];
+  for (let i = 0; i < 110; i += 1) {
+    stars.push({ x: rng() * PANEL_X, y: rng() * 260, r: 0.6 + rng() * 1.5, tw: rng() * Math.PI * 2 });
   }
-
-  get progress() {
-    if (this.state === 'levelComplete' || this.state === 'victory') {
-      return 1;
-    }
-    return Math.max(0, Math.min(1, (this.cameraX + PLAYER_X) / this.level.gateX));
+  const fireflies = [];
+  for (let i = 0; i < 16; i += 1) {
+    fireflies.push({ x: rng() * PANEL_X, y: 120 + rng() * 560, phase: rng() * Math.PI * 2, speed: 0.4 + rng() * 0.5 });
   }
+  return {
+    screen: 'title',
+    difficulty: difficulty.id,
+    seed,
+    rng,
+    time: 0,
+    runTime: 0,
+    ember: difficulty.startEmber,
+    lives: difficulty.startLives,
+    maxLives: difficulty.startLives,
+    wave: 0,
+    score: 0,
+    kills: 0,
+    leaks: 0,
+    emberEarned: 0,
+    towersBuilt: 0,
+    towers: [],
+    enemies: [],
+    projectiles: [],
+    effects: createEffects(),
+    spawnQueue: [],
+    spawnTimer: 0,
+    waveActive: false,
+    waveTime: 0,
+    buildType: null,
+    selectedTower: null,
+    boonOptions: [],
+    boonsTaken: [],
+    abilities: { sunburst: { cd: 0 }, frostnova: { cd: 0 } },
+    modifiers: { damageMul: 1, rangeMul: 1, slowMul: 1, cooldownMul: 1, rewardMul: 1 },
+    banner: null,
+    speed: 1,
+    bossEnraged: false,
+    stars: 0,
+    best: loadBest(),
+    pathSet: pathCells(),
+    ambientStars: stars,
+    fireflies,
+    muted: false,
+    hoverTower: null,
+  };
+}
 
-  get levelLabel() {
-    return 'LEVEL ' + (this.levelIndex + 1) + ' OF ' + LEVELS.length;
-  }
+export function cellAt(x, y) {
+  if (x < 0 || x >= PANEL_X || y < 0 || y >= ROWS * CELL) return null;
+  return { col: Math.floor(x / CELL), row: Math.floor(y / CELL) };
+}
 
-  setState(next) {
-    this.state = next;
-    this.stateTime = 0;
-  }
+export function towerAtCell(state, col, row) {
+  return state.towers.find((tower) => tower.col === col && tower.row === row) || null;
+}
 
-  saveBest() {
-    if (this.score > this.best) {
-      this.best = this.score;
-      this.isNewBest = true;
-    }
-    try {
-      window.localStorage.setItem(BEST_KEY, String(this.best));
-    } catch (error) {
-      // Best score is a nicety. The run continues without it.
-    }
-  }
+export function canPlaceTower(state, col, row) {
+  if (col < 0 || col >= COLS || row < 0 || row >= ROWS) return false;
+  if (state.pathSet.has(`${col},${row}`)) return false;
+  if (towerAtCell(state, col, row)) return false;
+  return true;
+}
 
-  toTitle() {
-    this.setState('title');
-    this.levelIndex = 0;
-    this.level = buildLevel(0, this.seedBase);
-    this.player.reset();
-    this.particles = new Particles();
-    this.score = 0;
-    this.lives = START_LIVES;
-    this.combo = 0;
-    this.cameraX = 0;
-    this.respawnCamera = 0;
-    this.trauma = 0;
-    this.shake = 0;
-    this.flash = 0;
-    this.isNewBest = false;
-  }
+export function placeTower(state, col, row) {
+  if (!state.buildType) return false;
+  const def = TOWER_TYPES[state.buildType];
+  if (state.ember < def.cost) return false;
+  if (!canPlaceTower(state, col, row)) return false;
+  state.ember -= def.cost;
+  const tower = createTower(state.buildType, col, row);
+  state.towers.push(tower);
+  state.towersBuilt += 1;
+  state.selectedTower = tower;
+  state.buildType = null;
+  burstEffects(state.effects, tower.x, tower.y, '#ffd97a', 16, 110, 0.5, 3);
+  spawnRing(state.effects, tower.x, tower.y, '#ffd97a', 40);
+  playBuild();
+  return true;
+}
 
-  startRun() {
-    this.score = 0;
-    this.lives = START_LIVES;
-    this.combo = 0;
-    this.isNewBest = false;
-    this.startLevel(0);
-    this.setState('playing');
-    this.sounds.start();
-  }
+export function starRating(state) {
+  if (state.lives >= 15) return 3;
+  if (state.lives >= 8) return 2;
+  return 1;
+}
 
-  startLevel(index) {
-    this.levelIndex = index;
-    this.level = buildLevel(index, this.seedBase);
-    this.player.reset();
-    this.particles = new Particles();
-    this.cameraX = 0;
-    this.respawnCamera = 0;
-    this.orbsTaken = 0;
-    this.shardsTaken = 0;
-    this.combo = 0;
-    this.trauma = 0;
-    this.shake = 0;
-    this.flash = 0;
-    this.hitStop = 0;
-    this.flipBuffer = 0;
-    this.bannerTime = 2;
-    this.moteTimer = 0;
-  }
-
-  muteButton() {
-    return { x: VIEW_WIDTH - 172, y: VIEW_HEIGHT - 54, w: 158, h: 38 };
-  }
-
-  buttons() {
-    if (this.state === 'title') {
-      return [{ id: 'start', label: 'START GAME', x: 490, y: 516, w: 300, h: 64 }];
-    }
-    if (this.state === 'paused') {
-      return [
-        { id: 'resume', label: 'RESUME', x: 490, y: 386, w: 300, h: 62 },
-        { id: 'restart', label: 'RESTART RUN', x: 490, y: 462, w: 300, h: 56 },
-      ];
-    }
-    if (this.state === 'levelComplete') {
-      const last = this.levelIndex + 1 >= LEVELS.length;
-      return [{ id: 'next', label: last ? 'SEE RESULTS' : 'NEXT LEVEL', x: 490, y: 534, w: 300, h: 64 }];
-    }
-    if (this.state === 'gameOver') {
-      return [{ id: 'retry', label: 'TRY AGAIN', x: 490, y: 516, w: 300, h: 64 }];
-    }
-    if (this.state === 'victory') {
-      return [{ id: 'again', label: 'PLAY AGAIN', x: 490, y: 534, w: 300, h: 64 }];
-    }
-    return [];
-  }
-
-  clickedButton() {
-    if (!this.input.pointer.clicked) {
-      return null;
-    }
-    const { clickX, clickY } = this.input.pointer;
-    for (const button of this.buttons()) {
-      if (pointInRect(button, clickX, clickY)) {
-        return button.id;
+function sweepEnemies(state) {
+  for (let i = state.enemies.length - 1; i >= 0; i -= 1) {
+    const enemy = state.enemies[i];
+    if (enemy.dead) {
+      const reward = Math.round(enemy.reward * state.modifiers.rewardMul);
+      state.ember += reward;
+      state.emberEarned += reward;
+      state.score += enemy.score;
+      state.kills += 1;
+      burstEffects(state.effects, enemy.x, enemy.y, enemy.color, enemy.kind === 'boss' ? 40 : 12, 140, 0.55, 3);
+      spawnRing(state.effects, enemy.x, enemy.y, enemy.color, enemy.radius + 18);
+      spawnFloater(state.effects, enemy.x, enemy.y - enemy.radius - 6, `+${reward}`, '#ffd97a', false);
+      if (enemy.kind === 'boss') {
+        addShake(state.effects, 10);
+        spawnFloater(state.effects, enemy.x, enemy.y - 50, 'GLOOMWARDEN FELLED', '#ffe9a8', true);
       }
-    }
-    return null;
-  }
-
-  handleMuteClick() {
-    if (this.input.pointer.clicked && pointInRect(this.muteButton(), this.input.pointer.clickX, this.input.pointer.clickY)) {
-      this.sounds.toggleMute();
-      this.sounds.click();
-      return true;
-    }
-    return false;
-  }
-
-  update(dt) {
-    this.time += dt;
-    this.animTime += dt;
-    this.stateTime += dt;
-    if (this.shotMode) {
-      // Staged for a screenshot: the scene holds still while the sky
-      // keeps shimmering, so the capture matches the staged state.
-      return;
-    }
-    if (this.input.wasPressed('KeyM')) {
-      this.sounds.toggleMute();
-    }
-    const muteClicked = this.handleMuteClick();
-    if (this.input.wasPressed('KeyR') && this.state !== 'title') {
-      this.startRun();
-      return;
-    }
-
-    if (this.state === 'title') {
-      this.cameraX += 55 * dt;
-      if (this.cameraX > this.level.length - VIEW_WIDTH - 100) {
-        this.cameraX = 0;
-      }
-      this.spawnMotes(dt);
-      this.particles.update(dt);
-      if (!muteClicked && (this.input.wasAnyPressed(['Space', 'Enter']) || this.clickedButton() === 'start')) {
-        this.startRun();
-      }
-      return;
-    }
-
-    if (this.state === 'playing') {
-      if (this.input.wasAnyPressed(['KeyP', 'Escape'])) {
-        this.setState('paused');
-        this.sounds.click();
-        return;
-      }
-      // A hit stop freezes the world for a beat, so hits land hard.
-      if (this.hitStop > 0) {
-        this.hitStop -= dt;
-        this.particles.update(dt * 0.25);
-        return;
-      }
-      if (!muteClicked && (this.input.wasAnyPressed(['Space', 'ArrowUp', 'KeyW']) || this.input.pointer.clicked)) {
-        if (!this.doFlip()) {
-          this.flipBuffer = FLIP_BUFFER;
+      if (enemy.splitsInto) {
+        const hpMul = waveHpMultiplier(state.wave) * DIFFICULTIES[state.difficulty].hpMul * 0.6;
+        for (let s = 0; s < enemy.splitCount; s += 1) {
+          const child = createEnemy(enemy.splitsInto, hpMul, (s - 0.5) * 16);
+          child.x = enemy.x + (s - 0.5) * 18;
+          child.y = enemy.y + (s - 0.5) * 10;
+          child.waypointIndex = enemy.waypointIndex;
+          child.distance = enemy.distance;
+          state.enemies.push(child);
         }
       }
-      if (this.flipBuffer > 0) {
-        this.flipBuffer -= dt;
-        if (this.player.flipCooldown <= 0 && this.doFlip()) {
-          this.flipBuffer = 0;
-        }
-      }
-      this.cameraX += this.level.speed * dt;
-      const landed = this.player.update(dt);
-      if (landed === 'landed') {
-        const groundY = this.player.dir === 1 ? FLOOR_Y : CEILING_Y;
-        this.particles.dust(this.player.x, groundY, '#4be3c3', this.player.impactVy);
-        this.particles.ring(this.player.x, groundY, '#4be3c3', 46);
-        this.sounds.land(this.player.impactVy);
-        if (this.player.impactVy > 900) {
-          this.trauma = Math.min(1, this.trauma + 0.18);
-        }
-      }
-      this.player.trailTimer -= dt;
-      if (this.player.trailTimer <= 0) {
-        this.player.trailTimer = 0.03;
-        this.particles.trail(this.player.x - 18, this.player.y, '#53e9ff');
-      }
-      this.spawnMotes(dt);
-      this.checkPickups();
-      this.checkCheckpoints();
-      if (!this.player.isInvulnerable(this.time) && hazardHit(this.level, this.player.box(), this.time, this.cameraX)) {
-        this.onHit();
-      }
-      if (this.cameraX + PLAYER_X >= this.level.gateX) {
-        this.cameraX = this.level.gateX - PLAYER_X + 30;
-        this.completeLevel();
-      }
-      this.bannerTime = Math.max(0, this.bannerTime - dt);
-      this.trauma = Math.max(0, this.trauma - dt * 1.7);
-      this.shake = this.trauma * 16;
-      this.flash = Math.max(0, this.flash - dt * 1.6);
-      this.comboPop = Math.max(0, this.comboPop - dt * 3);
-      this.lifePop = Math.max(0, this.lifePop - dt * 3);
-      this.particles.update(dt);
-      return;
+      if (state.kills % 3 === 0) playCoin();
+      state.enemies.splice(i, 1);
+      continue;
     }
-
-    if (this.state === 'paused') {
-      if (this.input.wasAnyPressed(['KeyP', 'Escape'])) {
-        this.setState('playing');
-        this.sounds.click();
-        return;
-      }
-      const clicked = this.clickedButton();
-      if (clicked === 'resume') {
-        this.setState('playing');
-        this.sounds.click();
-      } else if (clicked === 'restart') {
-        this.startRun();
-      }
-      return;
-    }
-
-    if (this.state === 'levelComplete') {
-      this.rainConfetti(dt);
-      this.particles.update(dt);
-      if (this.input.wasAnyPressed(['Space', 'Enter']) || this.clickedButton() === 'next') {
-        this.nextLevel();
-      }
-      return;
-    }
-
-    if (this.state === 'gameOver' || this.state === 'victory') {
-      if (this.state === 'victory') {
-        this.rainConfetti(dt);
-      }
-      this.particles.update(dt);
-      const clicked = this.clickedButton();
-      if (this.input.wasAnyPressed(['Space', 'Enter']) || clicked === 'retry' || clicked === 'again') {
-        this.startRun();
-      }
+    if (enemy.reachedEnd) {
+      state.lives -= enemy.leak;
+      state.leaks += 1;
+      addShake(state.effects, 8);
+      addFlash(state.effects, '#ff5d6c', 0.35);
+      burstEffects(state.effects, 888, 600, '#ff5d6c', 20, 150, 0.6, 3.5);
+      spawnFloater(state.effects, 888, 548, `-${enemy.leak} LIGHT`, '#ff5d6c', true);
+      playLeak();
+      state.enemies.splice(i, 1);
     }
   }
+}
 
-  spawnMotes(dt) {
-    this.moteTimer -= dt;
-    if (this.moteTimer <= 0) {
-      this.moteTimer = 0.55;
-      this.particles.mote();
-    }
+export function fireSunburst(state) {
+  const ability = state.abilities.sunburst;
+  if (ability.cd > 0 || state.enemies.length === 0) return false;
+  ability.cd = ABILITIES.sunburst.cooldown;
+  addFlash(state.effects, '#ffe9a8', 0.55);
+  addShake(state.effects, 6);
+  spawnRing(state.effects, 480, 360, '#ffe9a8', 520);
+  for (const enemy of state.enemies) {
+    damageEnemy(enemy, ABILITIES.sunburst.damage * state.modifiers.damageMul, state.time);
+    burstEffects(state.effects, enemy.x, enemy.y, '#ffe9a8', 6, 90, 0.4, 2.5);
   }
+  playAbility();
+  return true;
+}
 
-  rainConfetti(dt) {
-    this.confettiTimer -= dt;
-    if (this.confettiTimer <= 0) {
-      this.confettiTimer = 0.22;
-      this.particles.confetti(120 + Math.random() * (VIEW_WIDTH - 240), -10, 3);
-    }
+export function fireFrostNova(state) {
+  const ability = state.abilities.frostnova;
+  if (ability.cd > 0 || state.enemies.length === 0) return false;
+  ability.cd = ABILITIES.frostnova.cooldown;
+  addFlash(state.effects, '#7fd8ff', 0.4);
+  spawnRing(state.effects, 480, 360, '#7fd8ff', 520);
+  for (const enemy of state.enemies) {
+    freezeEnemy(enemy, ABILITIES.frostnova.freeze, state.time);
   }
+  playAbility();
+  return true;
+}
 
-  doFlip() {
-    if (this.player.flip()) {
-      this.sounds.flip();
-      this.particles.burst(this.player.x, this.player.y, '#b678ff', 8, 160);
-      this.particles.ring(this.player.x, this.player.y, '#b678ff', 56);
-      return true;
-    }
-    return false;
+function endWaveIfCleared(state) {
+  if (!state.waveActive) return;
+  if (state.spawnQueue.length > 0 || state.enemies.length > 0) return;
+  state.waveActive = false;
+  const bonus = waveClearBonus(state.wave);
+  state.ember += bonus;
+  state.emberEarned += bonus;
+  state.score += bonus * 2;
+  spawnFloater(state.effects, 480, 200, `WAVE CLEAR  +${bonus} EMBER`, '#ffe9a8', true);
+  if (state.wave >= TOTAL_WAVES) {
+    state.stars = starRating(state);
+    state.screen = 'victory';
+    saveBest(state);
+    playVictory();
+    return;
   }
+  rollBoons(state);
+  state.screen = 'boon';
+}
 
-  checkPickups() {
-    const px = this.player.x;
-    const py = this.player.y;
-    for (const orb of this.level.orbs) {
-      if (orb.taken) {
-        continue;
-      }
-      const dx = orb.x - this.cameraX - px;
-      const dy = orb.y - py;
-      if (dx * dx + dy * dy < 38 * 38) {
-        orb.taken = true;
-        this.orbsTaken += 1;
-        this.combo += 1;
-        const points = ORB_POINTS * this.multiplier;
-        this.score += points;
-        this.particles.popup('+' + points, orb.x - this.cameraX, orb.y - 24, '#ffd94d');
-        this.particles.burst(orb.x - this.cameraX, orb.y, '#ffd94d', 10, 170);
-        this.particles.sparkle(orb.x - this.cameraX, orb.y, '#fff7cc', 4);
-        this.sounds.collect(this.combo);
-        if (this.combo > 0 && this.combo % 10 === 0) {
-          this.comboPop = 1;
-          this.particles.popup('COMBO x' + this.multiplier + '!', px + 70, py - 64, '#ffd94d');
-          this.particles.ring(px, py, '#ffd94d', 80);
-          this.sounds.milestone();
-        }
-      }
-    }
-    for (const shard of this.level.shards) {
-      if (shard.taken) {
-        continue;
-      }
-      const dx = shard.x - this.cameraX - px;
-      const dy = shard.y - py;
-      if (dx * dx + dy * dy < 44 * 44) {
-        shard.taken = true;
-        this.shardsTaken += 1;
-        const points = SHARD_POINTS * this.multiplier;
-        this.score += points;
-        this.particles.popup('+' + points + ' SHARD', shard.x - this.cameraX, shard.y - 26, '#ffe066');
-        this.particles.burst(shard.x - this.cameraX, shard.y, '#ffe066', 16, 220);
-        this.particles.sparkle(shard.x - this.cameraX, shard.y, '#ffe066', 6);
-        this.particles.ring(shard.x - this.cameraX, shard.y, '#ffe066', 74);
-        this.sounds.shard();
-      }
-    }
+export function stepGame(state, dt) {
+  state.runTime += dt;
+  state.abilities.sunburst.cd = Math.max(0, state.abilities.sunburst.cd - dt);
+  state.abilities.frostnova.cd = Math.max(0, state.abilities.frostnova.cd - dt);
+  if (state.banner) {
+    state.banner.t -= dt;
+    if (state.banner.t <= 0) state.banner = null;
   }
+  updateSpawning(state, dt);
+  updateTowers(state, dt);
+  updateProjectiles(state, dt);
+  moveEnemies(state, dt);
+  sweepEnemies(state);
+  updateEffects(state.effects, dt);
+  if (state.lives <= 0) {
+    state.lives = 0;
+    state.screen = 'defeat';
+    saveBest(state);
+    playDefeat();
+    return;
+  }
+  endWaveIfCleared(state);
+}
 
-  checkCheckpoints() {
-    const headX = this.cameraX + PLAYER_X;
-    for (const checkpoint of this.level.checkpoints) {
-      if (!checkpoint.reached && headX > checkpoint.x) {
-        checkpoint.reached = true;
-        this.respawnCamera = Math.max(0, checkpoint.x - 340);
-        this.particles.popup('CHECKPOINT', checkpoint.x - this.cameraX, 300, '#2ee6a8');
-        this.particles.ring(checkpoint.x - this.cameraX, FLOOR_Y - 60, '#2ee6a8', 70);
-        this.sounds.checkpoint();
-      }
-    }
-  }
-
-  onHit() {
-    this.lives -= 1;
-    this.combo = 0;
-    this.flash = 0.55;
-    this.trauma = 1;
-    this.shake = 16;
-    this.lifePop = 1;
-    this.sounds.hit();
-    this.particles.burst(this.player.x, this.player.y, '#ff5d7a', 20, 260);
-    this.particles.ring(this.player.x, this.player.y, '#ff5d7a', 90);
-    if (this.lives <= 0) {
-      this.hitStop = 0.22;
-      this.setState('gameOver');
-      this.saveBest();
-      this.sounds.lose();
-      return;
-    }
-    this.hitStop = 0.09;
-    this.particles.popup('HIT', this.player.x, this.player.y - 50, '#ff5d7a');
-    this.cameraX = this.respawnCamera;
-    this.player.reset();
-    this.player.invulnerableUntil = this.time + RESPAWN_GRACE;
-  }
-
-  completeLevel() {
-    const fraction = this.orbsTaken / Math.max(1, this.level.totalOrbs);
-    this.stars = fraction >= 0.9 ? 3 : fraction >= 0.6 ? 2 : 1;
-    this.levelBonus = LEVEL_CLEAR_BONUS + LIFE_BONUS * this.lives;
-    this.score += this.levelBonus;
-    this.saveBest();
-    this.setState('levelComplete');
-    this.sounds.win();
-    const gateScreenX = this.level.gateX - this.cameraX;
-    this.particles.burst(gateScreenX, 360, '#2ee6a8', 30, 300);
-    this.particles.burst(gateScreenX, 360, '#ffd94d', 20, 240);
-    this.particles.ring(gateScreenX, 360, '#2ee6a8', 130);
-    this.particles.confetti(gateScreenX, 300, 40);
-  }
-
-  nextLevel() {
-    if (this.levelIndex + 1 >= LEVELS.length) {
-      this.setState('victory');
-      this.saveBest();
-      this.sounds.victory();
-      this.particles.confetti(VIEW_WIDTH / 2, 260, 60);
-      return;
-    }
-    this.startLevel(this.levelIndex + 1);
-    this.setState('playing');
-    this.sounds.start();
-  }
-
-  statusText() {
-    if (this.state === 'title') {
-      return 'Aurora Flip title screen. Press Space or click Start Game.';
-    }
-    if (this.state === 'playing') {
-      return this.level.def.name + ', ' + this.levelLabel + '. Score ' + this.score + '. ' + this.lives + ' lives left.';
-    }
-    if (this.state === 'paused') {
-      return 'Paused. Press P to resume.';
-    }
-    if (this.state === 'levelComplete') {
-      return 'Level clear. ' + this.stars + ' stars. Score ' + this.score + '.';
-    }
-    if (this.state === 'gameOver') {
-      return 'Game over. Score ' + this.score + '. Best ' + this.best + '.';
-    }
-    return 'You restored the aurora. Final score ' + this.score + '.';
-  }
+export function restartRun(state) {
+  const fresh = createGame(state.difficulty, (state.seed + 1) >>> 0);
+  fresh.screen = 'play';
+  fresh.best = state.best;
+  fresh.muted = state.muted;
+  return fresh;
 }
